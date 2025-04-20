@@ -17,11 +17,33 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.3);
             z-index: 1000;
-            max-width: 250px;
+            max-width: 280px;
+        }
+        
+        .loading-status {
+            margin-top: 5px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background-color: #eee;
+            border-radius: 5px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background-color: #0066cc;
+            width: 0%;
+            transition: width 0.3s;
         }
         
         .filters {
-            margin-top: 10px;
+            margin-top: 15px;
         }
         
         .demand-slider {
@@ -64,6 +86,10 @@
     <div class="info-box">
         <h3>Pedestrian Demand Model</h3>
         <div>Total Points: <span id="totalPoints">Loading...</span></div>
+        <div class="loading-status" id="loadingStatus">Loading data from Google Cloud Storage...</div>
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
         
         <div class="filters">
             <h4>Filter by Demand Rank</h4>
@@ -124,8 +150,8 @@
                 }
             });
             
-            // Generate sample data
-            generateSampleData();
+            // Load data from Google Cloud Storage
+            loadDataFromGCS();
         }
         
         // Create a custom "Back to Map" button for Street View
@@ -149,75 +175,78 @@
             return backButton;
         }
         
-        function generateSampleData() {
-            const towns = ['Hartford', 'New Haven', 'Bridgeport', 'Stamford', 'Waterbury', 'Norwalk', 'Danbury', 'New Britain'];
-            const sampleData = [];
+        async function loadDataFromGCS() {
+            const loadingStatus = document.getElementById('loadingStatus');
+            const progressFill = document.getElementById('progressFill');
             
-            // Create realistic clusters of data along highway corridors
-            const createRouteCluster = (routeId, baseLat, baseLng, points, variation) => {
-                const direction = Math.random() * Math.PI * 2;
-                const speedFactor = Math.random() * 0.2 + 0.1; // Different routes have different density
+            try {
+                loadingStatus.textContent = "Loading data from Google Cloud Storage...";
+                progressFill.style.width = "10%";
                 
-                for (let i = 0; i < points; i++) {
-                    const distance = i * speedFactor;
-                    const jitter = variation * (Math.random() - 0.5);
-                    const jitterLat = variation * (Math.random() - 0.5);
-                    const lat = baseLat + Math.cos(direction) * distance + jitterLat;
-                    const lng = baseLng + Math.sin(direction) * distance + jitter;
-                    
-                    // Make urban areas have higher demand ranks
-                    let townIndex = Math.floor(Math.random() * towns.length);
-                    let demandRank;
-                    
-                    // For the first 20% of towns, use higher rank (simulate urban areas)
-                    if (townIndex < towns.length * 0.2) {
-                        demandRank = Math.floor(Math.random() * 3) + 8; // 8-10
-                    } 
-                    // For the next 30%, medium-high rank
-                    else if (townIndex < towns.length * 0.5) {
-                        demandRank = Math.floor(Math.random() * 2) + 6; // 6-7
-                    }
-                    // For the next 30%, medium rank
-                    else if (townIndex < towns.length * 0.8) {
-                        demandRank = Math.floor(Math.random() * 2) + 4; // 4-5
-                    }
-                    // For the rest, low rank (rural areas)
-                    else {
-                        demandRank = Math.floor(Math.random() * 3) + 1; // 1-3
-                    }
-                    
-                    sampleData.push({
-                        position: [lng, lat],
-                        DemandRank: demandRank,
-                        route_id: routeId,
-                        begin_poin: parseFloat((i * 0.1).toFixed(1)),
-                        Sidewalks: demandRank > 5 ? 1 : Math.random() > 0.7 ? 1 : 0,
-                        town: towns[townIndex]
-                    });
+                // Fetch the data from Google Cloud Storage
+                const response = await fetch("https://storage.googleapis.com/pedestrian-demand-data/milepoints_data.json");
+                
+                // Check if the request was successful
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
                 }
-            };
-            
-            // Create main routes in CT
-            createRouteCluster('RT-91', 41.55, -72.65, 400, 0.002); // I-91
-            createRouteCluster('RT-84', 41.78, -72.52, 400, 0.002); // I-84
-            createRouteCluster('RT-95', 41.30, -72.92, 400, 0.001); // I-95
-            createRouteCluster('RT-15', 41.27, -73.20, 300, 0.005); // Merritt Parkway
-            createRouteCluster('RT-9', 41.53, -72.64, 200, 0.01);   // Route 9
-            createRouteCluster('RT-8', 41.42, -73.05, 200, 0.01);   // Route 8
-            createRouteCluster('RT-2', 41.64, -72.05, 200, 0.01);   // Route 2
-            
-            // Create some smaller state routes
-            for (let i = 0; i < 25; i++) {
-                const routeId = `RT-${Math.floor(Math.random() * 200) + 1}`;
-                const baseLat = 41.1 + Math.random() * 1;
-                const baseLng = -73.7 + Math.random() * 1.5;
-                createRouteCluster(routeId, baseLat, baseLng, 50 + Math.floor(Math.random() * 100), 0.01);
+                
+                // Start reading the response as it comes in
+                const reader = response.body.getReader();
+                const contentLength = +response.headers.get('Content-Length');
+                
+                let receivedLength = 0;
+                let chunks = [];
+                
+                // Read the data chunks as they arrive
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) {
+                        break;
+                    }
+                    
+                    chunks.push(value);
+                    receivedLength += value.length;
+                    
+                    // Update the progress bar
+                    if (contentLength) {
+                        const progress = Math.round((receivedLength / contentLength) * 100);
+                        progressFill.style.width = `${progress}%`;
+                        loadingStatus.textContent = `Loading data: ${progress}%`;
+                    }
+                }
+                
+                // Combine the chunks into a single Uint8Array
+                let chunksAll = new Uint8Array(receivedLength);
+                let position = 0;
+                for (let chunk of chunks) {
+                    chunksAll.set(chunk, position);
+                    position += chunk.length;
+                }
+                
+                // Convert to a string
+                const text = new TextDecoder("utf-8").decode(chunksAll);
+                
+                // Parse the JSON
+                pointsData = JSON.parse(text);
+                
+                // Update total points counter
+                document.getElementById('totalPoints').textContent = pointsData.length.toLocaleString();
+                
+                // Update loading status
+                loadingStatus.textContent = "Data loaded successfully!";
+                progressFill.style.width = "100%";
+                
+                // Create the visualization
+                createDeckLayer();
+                
+            } catch (error) {
+                console.error('Error loading data:', error);
+                loadingStatus.textContent = `Error loading data: ${error.message}`;
+                progressFill.style.width = "100%";
+                progressFill.style.backgroundColor = "#ff3333";
             }
-            
-            // Use the sample data
-            pointsData = sampleData;
-            document.getElementById('totalPoints').textContent = pointsData.length.toLocaleString();
-            createDeckLayer();
         }
         
         function createDeckLayer() {
