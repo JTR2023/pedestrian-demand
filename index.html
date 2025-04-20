@@ -25,6 +25,41 @@
         .coord-system select { width: 100%; padding: 5px; margin-top: 5px; border-radius: 4px; }
     </style>
 
+    </head>
+<body>
+    <div id="map"></div>
+
+    <div class="info-box">
+         <h3>Pedestrian Demand Model</h3>
+         <div>Total Points: <span id="totalPoints">Loading...</span></div>
+         <div class="loading-status" id="loadingStatus">Initializing...</div> <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+         <div class="filters">
+             <h4>Filter by Demand Rank</h4>
+             <div>
+                 <input type="range" class="demand-slider" id="rankMin" min="1" max="10" value="1">
+                 <input type="range" class="demand-slider" id="rankMax" min="1" max="10" value="10">
+                 <div>Range: <span id="rankRangeDisplay">1-10</span></div>
+             </div>
+         </div>
+         <div class="coord-system">
+             <h4>Coordinate System</h4>
+             <select id="coordSystem" onchange="updateCoordinateSystem()">
+                 <option value="wgs84">WGS84 (Latitude/Longitude)</option>
+                 <option value="nad83_ct" selected>NAD83 Connecticut State Plane (ft)</option>
+                 <option value="nad83_ct_meters">NAD83 Connecticut State Plane (m)</option>
+                 <option value="swap">Swap X/Y Coordinates</option>
+             </select>
+         </div>
+     </div>
+
+    <div class="legend">
+         <h4>Demand Rank</h4>
+         <div><span style="background: rgb(254, 224, 210);"></span>8-10 (High)</div>
+         <div><span style="background: rgb(252, 187, 161);"></span>6-7 (Medium-High)</div>
+         <div><span style="background: rgb(251, 106, 74);"></span>4-5 (Medium)</div>
+         <div><span style="background: rgb(103, 0, 13);"></span>1-3 (Low)</div>
+     </div>
+
     <script>
         let pointsData = []; // Transformed data for display
         let originalPointsData = []; // Raw data loaded from GCS
@@ -48,6 +83,7 @@
         // This function is now called by the Google Maps API callback
         function initialize() {
             console.log("Initialize function called by Maps API."); // DEBUG
+            // Now safe to access DOM elements as script runs late
             document.getElementById('loadingStatus').textContent = "Initializing map...";
 
             map = new google.maps.Map(document.getElementById('map'), {
@@ -58,7 +94,7 @@
 
             map.addListener('streetview_changed', () => { /* Street view logic can be added later */ });
 
-            // Add event listeners for sliders *after* map is initialized
+            // Add event listeners for sliders
              const rangeInputs = document.querySelectorAll('.demand-slider');
              const rankMinInput = document.getElementById('rankMin');
              const rankMaxInput = document.getElementById('rankMax');
@@ -245,42 +281,7 @@
                  return typeof rank === 'number' && !isNaN(rank) && rank >= minRank && rank <= maxRank;
             });
         }
-
     </script>
-
-</head>
-<body>
-    <div id="map"></div>
-    <div class="info-box">
-         <h3>Pedestrian Demand Model</h3>
-         <div>Total Points: <span id="totalPoints">Loading...</span></div>
-         <div class="loading-status" id="loadingStatus">Initializing...</div>
-         <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-         <div class="filters">
-             <h4>Filter by Demand Rank</h4>
-             <div>
-                 <input type="range" class="demand-slider" id="rankMin" min="1" max="10" value="1">
-                 <input type="range" class="demand-slider" id="rankMax" min="1" max="10" value="10">
-                 <div>Range: <span id="rankRangeDisplay">1-10</span></div>
-             </div>
-         </div>
-         <div class="coord-system">
-             <h4>Coordinate System</h4>
-             <select id="coordSystem" onchange="updateCoordinateSystem()">
-                 <option value="wgs84">WGS84 (Latitude/Longitude)</option>
-                 <option value="nad83_ct" selected>NAD83 Connecticut State Plane (ft)</option>
-                 <option value="nad83_ct_meters">NAD83 Connecticut State Plane (m)</option>
-                 <option value="swap">Swap X/Y Coordinates</option>
-             </select>
-         </div>
-     </div>
-    <div class="legend">
-         <h4>Demand Rank</h4>
-         <div><span style="background: rgb(254, 224, 210);"></span>8-10 (High)</div>
-         <div><span style="background: rgb(252, 187, 161);"></span>6-7 (Medium-High)</div>
-         <div><span style="background: rgb(251, 106, 74);"></span>4-5 (Medium)</div>
-         <div><span style="background: rgb(103, 0, 13);"></span>1-3 (Low)</div>
-     </div>
 
     <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRG2xII3nH7HJkp08TKpssRgLkf0OjMBQ&libraries=visualization&callback=initialize"></script>
 
