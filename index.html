@@ -24,49 +24,14 @@
         .coord-system { margin-top: 15px; padding-top: 10px; border-top: 1px solid #ddd; }
         .coord-system select { width: 100%; padding: 5px; margin-top: 5px; border-radius: 4px; }
     </style>
-</head>
-<body>
-    <div id="map"></div>
-    <div class="info-box">
-        <h3>Pedestrian Demand Model</h3>
-        <div>Total Points: <span id="totalPoints">Loading...</span></div>
-        <div class="loading-status" id="loadingStatus">Initializing...</div>
-        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-        <div class="filters">
-            <h4>Filter by Demand Rank</h4>
-            <div>
-                <input type="range" class="demand-slider" id="rankMin" min="1" max="10" value="1">
-                <input type="range" class="demand-slider" id="rankMax" min="1" max="10" value="10">
-                <div>Range: <span id="rankRangeDisplay">1-10</span></div>
-            </div>
-        </div>
-        <div class="coord-system">
-            <h4>Coordinate System</h4>
-            <select id="coordSystem" onchange="updateCoordinateSystem()">
-                <option value="wgs84">WGS84 (Latitude/Longitude)</option>
-                <option value="nad83_ct" selected>NAD83 Connecticut State Plane (ft)</option>
-                <option value="nad83_ct_meters">NAD83 Connecticut State Plane (m)</option>
-                <option value="swap">Swap X/Y Coordinates</option>
-            </select>
-        </div>
-    </div>
-    <div class="legend">
-        <h4>Demand Rank</h4>
-        <div><span style="background: rgb(254, 224, 210);"></span>8-10 (High)</div>
-        <div><span style="background: rgb(252, 187, 161);"></span>6-7 (Medium-High)</div>
-        <div><span style="background: rgb(251, 106, 74);"></span>4-5 (Medium)</div>
-        <div><span style="background: rgb(103, 0, 13);"></span>1-3 (Low)</div>
-    </div>
-
-    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRG2xII3nH7HJkp08TKpssRgLkf0OjMBQ&libraries=visualization"></script>
 
     <script>
-        let pointsData = []; // Transformed data for display
-        let originalPointsData = []; // Raw data loaded from GCS
+        let pointsData = [];
+        let originalPointsData = [];
         let deckOverlay;
         let map;
 
-        // Coordinate System Definitions (proj4.defs)
+        // Define proj4 coordinate systems
         proj4.defs('EPSG:2234', '+proj=lcc +lat_1=41.2 +lat_2=41.86666666666667 +lat_0=40.83333333333334 +lon_0=-72.75 +x_0=304800 +y_0=152400 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=us-ft +no_defs');
         proj4.defs('EPSG:6433', '+proj=lcc +lat_1=41.2 +lat_2=41.86666666666667 +lat_0=40.83333333333334 +lon_0=-72.75 +x_0=304800 +y_0=152400 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
         proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs');
@@ -75,42 +40,46 @@
         const dataUrl = "https://storage.googleapis.com/pedestrian-demand-data/milepoints_data.json";
 
         // Color function
-        function getColor(rank) { /* ... same as before ... */
-            if (rank <= 3) return [103, 0, 13, 220];
-            if (rank <= 5) return [251, 106, 74, 220];
-            if (rank <= 7) return [252, 187, 161, 220];
-            return [254, 224, 210, 220];
-         }
+        function getColor(rank) { /* ... */
+            if (rank <= 3) return [103, 0, 13, 220]; if (rank <= 5) return [251, 106, 74, 220]; if (rank <= 7) return [252, 187, 161, 220]; return [254, 224, 210, 220];
+        }
 
         // Initialize Google Map and Deck.gl Overlay
+        // This function is now called by the Google Maps API callback
         function initialize() {
-            // Check if google.maps is loaded before proceeding
-            if (typeof google === 'undefined' || typeof google.maps === 'undefined') {
-                console.error("Google Maps API not loaded yet. Retrying...");
-                setTimeout(initialize, 200); // Try again shortly
-                return;
-            }
-            console.log("Google Maps API ready. Initializing map...");
+            console.log("Google Maps API ready via callback. Initializing map...");
             document.getElementById('loadingStatus').textContent = "Initializing map...";
 
             map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 41.6, lng: -72.7 },
-                zoom: 9,
-                mapTypeId: 'satellite',
-                mapTypeControl: true,
-                mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_RIGHT },
-                streetViewControl: true,
-                streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP }
+                center: { lat: 41.6, lng: -72.7 }, zoom: 9, mapTypeId: 'satellite',
+                mapTypeControl: true, mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_RIGHT },
+                streetViewControl: true, streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP }
             });
 
-            // Street View listener (optional refinement)
             map.addListener('streetview_changed', () => { /* ... */ });
+
+            // Add event listeners for sliders *after* map is initialized
+             const rangeInputs = document.querySelectorAll('.demand-slider');
+             const rankMinInput = document.getElementById('rankMin');
+             const rankMaxInput = document.getElementById('rankMax');
+             const rankDisplay = document.getElementById('rankRangeDisplay');
+             function updateSliderDisplay() {
+                 const min = rankMinInput.value; const max = rankMaxInput.value;
+                 if (parseInt(min) > parseInt(max)) { if (this.id === 'rankMin') { rankMaxInput.value = min; } else { rankMinInput.value = max; } }
+                 rankDisplay.textContent = `${rankMinInput.value}-${rankMaxInput.value}`;
+                 // Only create layer if data is ready
+                 if (pointsData && pointsData.length > 0) {
+                    createDeckLayer();
+                 }
+             }
+             rangeInputs.forEach(input => { input.addEventListener('input', updateSliderDisplay); });
+             updateSliderDisplay(); // Initialize slider display
 
             // Load data from GCS
             loadDataFromGCS();
         }
 
-        // Load data from GCS function (async function loadDataFromGCS()...)
+        // Async Load data function
         async function loadDataFromGCS() { /* ... same as before ... */
             const loadingStatus = document.getElementById('loadingStatus');
             const progressFill = document.getElementById('progressFill');
@@ -147,7 +116,7 @@
                 originalPointsData = JSON.parse(text);
                 totalPointsSpan.textContent = originalPointsData.length.toLocaleString();
                 loadingStatus.textContent = "Data loaded. Applying coordinates...";
-                updateCoordinateSystem();
+                updateCoordinateSystem(); // This will call createDeckLayer indirectly
             } catch (error) {
                 console.error('Error loading or processing data:', error);
                 loadingStatus.textContent = `Error: ${error.message}`;
@@ -155,9 +124,9 @@
                 progressFill.style.width = "100%";
                 progressFill.style.backgroundColor = "#ff3333";
             }
-         }
+        }
 
-        // Update coordinate system function (function updateCoordinateSystem()...)
+        // Update coordinate system function
         function updateCoordinateSystem() { /* ... same as before ... */
             const system = document.getElementById('coordSystem').value;
             const loadingStatus = document.getElementById('loadingStatus');
@@ -166,30 +135,23 @@
             setTimeout(() => {
                  try {
                     pointsData = originalPointsData.map(point => {
-                        const newPoint = { ...point };
-                        const origX = point.position[0];
-                        const origY = point.position[1];
-                        let transformedPosition = null;
+                        const newPoint = { ...point }; const origX = point.position[0]; const origY = point.position[1]; let transformedPosition = null;
                         if (system === 'wgs84') { transformedPosition = [origX, origY]; }
                         else if (system === 'nad83_ct') { transformedPosition = proj4('EPSG:2234', 'EPSG:4326', [origX, origY]); }
                         else if (system === 'nad83_ct_meters') { transformedPosition = proj4('EPSG:6433', 'EPSG:4326', [origX, origY]); }
                         else if (system === 'swap') { transformedPosition = [origY, origX]; }
-                        if (transformedPosition && !isNaN(transformedPosition[0]) && !isNaN(transformedPosition[1])) {
-                             newPoint.position = transformedPosition; return newPoint;
-                        } else { return null; }
+                        if (transformedPosition && !isNaN(transformedPosition[0]) && !isNaN(transformedPosition[1])) { newPoint.position = transformedPosition; return newPoint; }
+                        else { return null; }
                     }).filter(p => p !== null);
                     loadingStatus.textContent = "Coordinates applied. Updating map...";
-                    createDeckLayer();
+                    createDeckLayer(); // Update map layer
                     loadingStatus.textContent = "Map updated.";
-                 } catch (error) {
-                     console.error("Error during coordinate transformation:", error);
-                     loadingStatus.textContent = `Error transforming coordinates: ${error.message}`;
-                 }
+                 } catch (error) { console.error("Error during coordinate transformation:", error); loadingStatus.textContent = `Error transforming coordinates: ${error.message}`; }
              }, 10);
         }
 
-        // Create Deck layer function (function createDeckLayer()...)
-        function createDeckLayer() { /* ... same as before, using infoWindow ... */
+        // Create Deck layer function
+        function createDeckLayer() { /* ... same as before ... */
             const filteredData = filterData();
             const scatterLayer = new deck.ScatterplotLayer({
                 id: 'demand-points', data: filteredData, getPosition: d => d.position,
@@ -208,33 +170,25 @@
              else { deckOverlay = new deck.GoogleMapsOverlay({ layers: [scatterLayer] }); deckOverlay.setMap(map); }
         }
 
-        // Filter data function (function filterData()...)
+        // Filter data function
         function filterData() { /* ... same as before ... */
             const minRank = parseInt(document.getElementById('rankMin').value);
             const maxRank = parseInt(document.getElementById('rankMax').value);
             if (!pointsData) return [];
             return pointsData.filter(point => point.DemandRank >= minRank && point.DemandRank <= maxRank);
-         }
+        }
 
-        // Event Listeners for sliders
-        document.addEventListener('DOMContentLoaded', () => { /* ... same as before ... */
-             const rangeInputs = document.querySelectorAll('.demand-slider');
-             const rankMinInput = document.getElementById('rankMin');
-             const rankMaxInput = document.getElementById('rankMax');
-             const rankDisplay = document.getElementById('rankRangeDisplay');
-             function updateSliderDisplay() {
-                 const min = rankMinInput.value; const max = rankMaxInput.value;
-                 if (parseInt(min) > parseInt(max)) { if (this.id === 'rankMin') { rankMaxInput.value = min; } else { rankMinInput.value = max; } }
-                 rankDisplay.textContent = `${rankMinInput.value}-${rankMaxInput.value}`; createDeckLayer();
-             }
-             rangeInputs.forEach(input => { input.addEventListener('input', updateSliderDisplay); });
-             updateSliderDisplay(); // Initialize
-
-             // *** Start initialization AFTER the DOM is ready and main script runs ***
-             initialize();
-         });
+        // *** NO DOMContentLoaded listener needed here anymore ***
 
     </script>
+
+</head>
+<body>
+    <div id="map"></div>
+    <div class="info-box"> /* ... */ </div>
+    <div class="legend"> /* ... */ </div>
+
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRG2xII3nH7HJkp08TKpssRgLkf0OjMBQ&libraries=visualization&callback=initialize"></script>
 
 </body>
 </html>
