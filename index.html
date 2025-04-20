@@ -4,194 +4,35 @@
     <title>CTDOT Pedestrian Demand Model</title>
     <script src="https://unpkg.com/deck.gl@8.9.27/dist.min.js"></script>
     <script src="https://unpkg.com/@deck.gl/google-maps@8.9.27/dist.min.js"></script>
+
     <style>
-        /* CSS styles remain the same */
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
         #map { width: 100vw; height: 100vh; }
-        .info-box { position: absolute; top: 20px; left: 20px; background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); z-index: 1000; max-width: 280px; transition: opacity 0.3s ease-in-out; } /* Added transition */
+        .info-box {
+            position: absolute;
+            top: 90px; /* Kept the lower position */
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3); z-index: 1000; max-width: 280px;
+            transition: opacity 0.3s ease-in-out;
+        }
         .loading-status { margin-top: 5px; font-size: 14px; color: #666; }
         .progress-bar { width: 100%; height: 10px; background-color: #eee; border-radius: 5px; margin-top: 5px; overflow: hidden; }
         .progress-fill { height: 100%; background-color: #0066cc; width: 0%; transition: width 0.3s; }
         .filters { margin-top: 15px; }
         .demand-slider { width: 100%; margin: 5px 0; }
-        .legend { position: absolute; bottom: 30px; left: 20px; background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); z-index: 1000; transition: opacity 0.3s ease-in-out;} /* Added transition */
+        .legend {
+            position: absolute; bottom: 30px; left: 20px; background: rgba(255, 255, 255, 0.95);
+            padding: 15px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000; transition: opacity 0.3s ease-in-out;
+        }
         .legend h4 { margin: 0 0 10px; font-size: 16px; }
         .legend div { padding: 3px 0; font-size: 14px; }
         .legend span { display: inline-block; width: 20px; height: 20px; margin-right: 8px; border: 1px solid #666; vertical-align: middle; border-radius: 4px; }
         .gm-svpc { z-index: 1001 !important; }
-        /* Removed .coord-system styles */
 
-        /* Style to hide elements */
-        .hidden-in-streetview {
-            opacity: 0;
-            pointer-events: none; /* Prevent interaction when hidden */
-        }
+        .hidden-in-streetview { opacity: 0; pointer-events: none; }
     </style>
-
-    <script>
-        let pointsData = []; // Will hold the raw (WGS84) data
-        let deckOverlay;
-        let map;
-        let infoBoxElement; // Reference to info box
-        let legendElement;  // Reference to legend
-
-        // GCS Data URL
-        const dataUrl = "https://storage.googleapis.com/pedestrian-demand-data/milepoints_data.json";
-
-        // Color function
-        function getColor(rank) {
-            if (rank <= 3) return [103, 0, 13, 220]; if (rank <= 5) return [251, 106, 74, 220]; if (rank <= 7) return [252, 187, 161, 220]; return [254, 224, 210, 220];
-        }
-
-        // Initialize Google Map
-        function initialize() {
-            console.log("Initialize function called by Maps API.");
-            // Get references to UI elements we want to hide/show
-            infoBoxElement = document.querySelector('.info-box');
-            legendElement = document.querySelector('.legend');
-
-            document.getElementById('loadingStatus').textContent = "Initializing map...";
-
-            map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 41.6, lng: -72.7 }, zoom: 9, mapTypeId: 'satellite',
-                mapTypeControl: true, mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_RIGHT },
-                streetViewControl: true, streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP } // Default position often works better
-            });
-
-            // --- Street View Visibility Toggle ---
-            map.addListener('streetview_changed', () => {
-                const panorama = map.getStreetView();
-                if (panorama && panorama.getVisible()) {
-                    // Street View is active - HIDE elements
-                    console.log("Entering Street View - hiding UI");
-                    infoBoxElement.classList.add('hidden-in-streetview');
-                    legendElement.classList.add('hidden-in-streetview');
-                } else {
-                    // Street View is inactive - SHOW elements
-                    console.log("Exiting Street View - showing UI");
-                    infoBoxElement.classList.remove('hidden-in-streetview');
-                    legendElement.classList.remove('hidden-in-streetview');
-                }
-            });
-            // --- End Street View Toggle ---
-
-            // Add event listeners for sliders
-             const rangeInputs = document.querySelectorAll('.demand-slider');
-             const rankMinInput = document.getElementById('rankMin');
-             const rankMaxInput = document.getElementById('rankMax');
-             const rankDisplay = document.getElementById('rankRangeDisplay');
-             function updateSliderDisplay() {
-                 const min = rankMinInput.value; const max = rankMaxInput.value;
-                 if (parseInt(min) > parseInt(max)) { if (this.id === 'rankMin') { rankMaxInput.value = min; } else { rankMinInput.value = max; } }
-                 rankDisplay.textContent = `${rankMinInput.value}-${rankMaxInput.value}`;
-                 if (pointsData && pointsData.length > 0 && map && deckOverlay) { createDeckLayer(); }
-             }
-             rangeInputs.forEach(input => { input.addEventListener('input', updateSliderDisplay); });
-             updateSliderDisplay();
-
-            // Load data from GCS (no transformation needed now)
-            loadDataFromGCS();
-        }
-
-        // Load data from GCS function (async function loadDataFromGCS()...)
-        // No coordinate transformation needed anymore
-        async function loadDataFromGCS() {
-            const loadingStatus = document.getElementById('loadingStatus');
-            const progressFill = document.getElementById('progressFill');
-            const totalPointsSpan = document.getElementById('totalPoints');
-            try {
-                loadingStatus.textContent = "Fetching data from GCS...";
-                totalPointsSpan.textContent = "Fetching...";
-                progressFill.style.width = "5%";
-                const response = await fetch(dataUrl);
-                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-
-                // --- Stream and report progress ---
-                const reader = response.body.getReader();
-                const contentLength = +response.headers.get('Content-Length');
-                let receivedLength = 0;
-                let chunks = [];
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    chunks.push(value); receivedLength += value.length;
-                    if (contentLength) { const progress = Math.round((receivedLength / contentLength) * 100); progressFill.style.width = `${progress}%`; loadingStatus.textContent = `Loading data: ${progress}%`; }
-                    else { loadingStatus.textContent = `Loading data: ${Math.round(receivedLength / 1024 / 1024)} MB received`; }
-                }
-                loadingStatus.textContent = "Processing data..."; progressFill.style.width = `100%`;
-                let chunksAll = new Uint8Array(receivedLength); let position = 0;
-                for (let chunk of chunks) { chunksAll.set(chunk, position); position += chunk.length; }
-                const text = new TextDecoder("utf-8").decode(chunksAll);
-                // --- End streaming ---
-
-                pointsData = JSON.parse(text); // Store raw data directly
-                console.log(`Parsed ${pointsData.length} raw data points.`);
-                // Verify structure of first point (optional check)
-                if (pointsData.length > 0) {
-                    const p0 = pointsData[0];
-                    console.log('Data sample (first item):', JSON.stringify(p0));
-                    if(!p0.position || !Array.isArray(p0.position) || p0.position.length !== 2 || typeof p0.DemandRank !== 'number'){
-                         console.warn("Warning: First data point structure might be unexpected.");
-                    }
-                } else { throw new Error("No data found in JSON after parsing."); }
-
-                totalPointsSpan.textContent = pointsData.length.toLocaleString();
-                loadingStatus.textContent = "Data loaded. Creating map layer...";
-                createDeckLayer(); // Create layer directly
-                loadingStatus.textContent = "Map updated.";
-
-            } catch (error) {
-                console.error('Error loading or processing data:', error);
-                loadingStatus.textContent = `Error: ${error.message}`;
-                totalPointsSpan.textContent = "Error";
-                progressFill.style.width = "100%"; progressFill.style.backgroundColor = "#ff3333";
-            }
-        }
-
-        // Update coordinate system function REMOVED - not needed
-
-        // Create Deck layer function
-        function createDeckLayer() {
-            const filteredData = filterData(); // Filter the raw WGS84 pointsData
-            console.log(`Rendering layer with ${filteredData.length} filtered points.`);
-
-             const scatterLayer = new deck.ScatterplotLayer({
-                 id: 'demand-points',
-                 data: filteredData, // Use directly - already WGS84
-                 getPosition: d => d.position, // Assumes [longitude, latitude]
-                 getFillColor: d => getColor(d.DemandRank),
-                 getRadius: 15, radiusUnits: 'meters',
-                 radiusMinPixels: 2, radiusMaxPixels: 20, pickable: true, opacity: 0.7, stroked: false,
-                 onClick: ({object, x, y}) => {
-                    if (object) {
-                        // Ensure position is valid before creating info window
-                         if (object.position && !isNaN(object.position[0]) && !isNaN(object.position[1])) {
-                             const infoContent = `<strong>Route:</strong> ${object.route_id}<br><strong>Milepoint:</strong> ${object.begin_poin}<br><strong>Demand Rank:</strong> ${object.DemandRank}<br><strong>Town:</strong> ${object.town}<br><strong>Sidewalks:</strong> ${object.Sidewalks ? 'Yes' : 'No'}<hr><strong>Coords (Lon, Lat):</strong> ${object.position[0].toFixed(6)}, ${object.position[1].toFixed(6)}`;
-                             const infoWindow = new google.maps.InfoWindow({ content: infoContent, position: { lat: object.position[1], lng: object.position[0] } });
-                             infoWindow.open(map);
-                         } else {
-                             console.warn("Clicked object missing valid position:", object);
-                         }
-                     }
-                 }
-             });
-              if (deckOverlay) { deckOverlay.setProps({ layers: [scatterLayer] }); }
-              else { deckOverlay = new deck.GoogleMapsOverlay({ layers: [scatterLayer] }); deckOverlay.setMap(map); }
-         }
-
-        // Filter data function
-        function filterData() {
-            const minRank = parseInt(document.getElementById('rankMin').value);
-            const maxRank = parseInt(document.getElementById('rankMax').value);
-            if (!pointsData) return [];
-            return pointsData.filter(point => {
-                 // Check if position and DemandRank are valid before filtering
-                 if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) return false;
-                 const rank = point.DemandRank;
-                 return typeof rank === 'number' && !isNaN(rank) && rank >= minRank && rank <= maxRank;
-            });
-        }
-    </script>
 
 </head>
 <body>
@@ -210,11 +51,155 @@
          </div>
          </div>
     <div class="legend"> <h4>Demand Rank</h4>
-         <div><span style="background: rgb(254, 224, 210);"></span>8-10 (High)</div>
-         <div><span style="background: rgb(252, 187, 161);"></span>6-7 (Medium-High)</div>
-         <div><span style="background: rgb(251, 106, 74);"></span>4-5 (Medium)</div>
-         <div><span style="background: rgb(103, 0, 13);"></span>1-3 (Low)</div>
-     </div>
+         <div><span style="background: rgb(103, 0, 13);"></span>8-10 (High)</div>         <div><span style="background: rgb(251, 106, 74);"></span>6-7 (Medium-High)</div> <div><span style="background: rgb(252, 187, 161);"></span>4-5 (Medium)</div>      <div><span style="background: rgb(254, 224, 210);"></span>1-3 (Low)</div>         </div>
+
+
+    <script>
+        let pointsData = [];
+        let deckOverlay;
+        let map;
+        let infoBoxElement;
+        let legendElement;
+
+        const dataUrl = "https://storage.googleapis.com/pedestrian-demand-data/milepoints_data.json";
+
+        // *** UPDATED getColor FUNCTION FOR INVERTED SCHEME ***
+        function getColor(rank) {
+            // Inverted: Darkest for High, Lightest for Low
+            if (rank >= 8) return [103, 0, 13, 220];    // High (8-10) -> Darkest Red
+            if (rank >= 6) return [251, 106, 74, 220];  // Medium-High (6-7) -> Orange
+            if (rank >= 4) return [252, 187, 161, 220]; // Medium (4-5) -> Light Orange
+            return [254, 224, 210, 220];                // Low (1-3) -> Lightest Pink
+        }
+
+        // Initialize Google Map
+        function initialize() {
+            console.log("Initialize function called by Maps API.");
+            infoBoxElement = document.querySelector('.info-box');
+            legendElement = document.querySelector('.legend');
+            document.getElementById('loadingStatus').textContent = "Initializing map...";
+
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 41.6, lng: -72.7 }, zoom: 9, mapTypeId: 'satellite',
+                mapTypeControl: true, mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_RIGHT },
+                streetViewControl: true, streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP }
+            });
+
+            // Street View Visibility Toggle
+            map.addListener('streetview_changed', () => {
+                const panorama = map.getStreetView();
+                if (panorama && panorama.getVisible()) {
+                    console.log("Entering Street View - hiding UI");
+                    if(infoBoxElement) infoBoxElement.classList.add('hidden-in-streetview');
+                    if(legendElement) legendElement.classList.add('hidden-in-streetview');
+                } else {
+                    console.log("Exiting Street View - showing UI");
+                    if(infoBoxElement) infoBoxElement.classList.remove('hidden-in-streetview');
+                    if(legendElement) legendElement.classList.remove('hidden-in-streetview');
+                }
+            });
+
+            // Add event listeners for sliders
+             const rangeInputs = document.querySelectorAll('.demand-slider');
+             const rankMinInput = document.getElementById('rankMin');
+             const rankMaxInput = document.getElementById('rankMax');
+             const rankDisplay = document.getElementById('rankRangeDisplay');
+             function updateSliderDisplay() {
+                 const min = rankMinInput.value; const max = rankMaxInput.value;
+                 if (parseInt(min) > parseInt(max)) { if (this.id === 'rankMin') { rankMaxInput.value = min; } else { rankMinInput.value = max; } }
+                 rankDisplay.textContent = `${rankMinInput.value}-${rankMaxInput.value}`;
+                 if (pointsData && pointsData.length > 0 && map && deckOverlay) { createDeckLayer(); }
+             }
+             rangeInputs.forEach(input => { input.addEventListener('input', updateSliderDisplay); });
+             updateSliderDisplay();
+
+            // Load data from GCS
+            loadDataFromGCS();
+        }
+
+        // Load data from GCS function
+        async function loadDataFromGCS() {
+            const loadingStatus = document.getElementById('loadingStatus');
+            const progressFill = document.getElementById('progressFill');
+            const totalPointsSpan = document.getElementById('totalPoints');
+            try {
+                loadingStatus.textContent = "Fetching data from GCS...";
+                totalPointsSpan.textContent = "Fetching...";
+                progressFill.style.width = "5%";
+                const response = await fetch(dataUrl);
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+
+                // Stream and report progress
+                const reader = response.body.getReader();
+                const contentLength = +response.headers.get('Content-Length');
+                let receivedLength = 0;
+                let chunks = [];
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value); receivedLength += value.length;
+                    if (contentLength) { const progress = Math.round((receivedLength / contentLength) * 100); progressFill.style.width = `${progress}%`; loadingStatus.textContent = `Loading data: ${progress}%`; }
+                    else { loadingStatus.textContent = `Loading data: ${Math.round(receivedLength / 1024 / 1024)} MB received`; }
+                }
+                loadingStatus.textContent = "Processing data..."; progressFill.style.width = `100%`;
+                let chunksAll = new Uint8Array(receivedLength); let position = 0;
+                for (let chunk of chunks) { chunksAll.set(chunk, position); position += chunk.length; }
+                const text = new TextDecoder("utf-8").decode(chunksAll);
+
+                pointsData = JSON.parse(text);
+                console.log(`Parsed ${pointsData.length} raw data points.`);
+                if (pointsData.length > 0) { /* Optional check */ }
+                else { throw new Error("No data found in JSON after parsing."); }
+
+                totalPointsSpan.textContent = pointsData.length.toLocaleString();
+                loadingStatus.textContent = "Data loaded. Creating map layer...";
+                createDeckLayer();
+                loadingStatus.textContent = "Map updated.";
+
+            } catch (error) {
+                console.error('Error loading or processing data:', error);
+                loadingStatus.textContent = `Error: ${error.message}`;
+                totalPointsSpan.textContent = "Error";
+                progressFill.style.width = "100%"; progressFill.style.backgroundColor = "#ff3333";
+            }
+        }
+
+        // Create Deck layer function
+        function createDeckLayer() {
+             const filteredData = filterData();
+             console.log(`Rendering layer with ${filteredData.length} filtered points.`);
+
+             const scatterLayer = new deck.ScatterplotLayer({
+                 id: 'demand-points', data: filteredData, getPosition: d => d.position,
+                 getFillColor: d => getColor(d.DemandRank), // Uses updated getColor
+                 getRadius: 15, radiusUnits: 'meters',
+                 radiusMinPixels: 2, radiusMaxPixels: 20, pickable: true, opacity: 0.7, stroked: false,
+                 onClick: ({object, x, y}) => { /* infoWindow */
+                    if (object) {
+                         if (object.position && !isNaN(object.position[0]) && !isNaN(object.position[1])) {
+                             const infoContent = `<strong>Route:</strong> ${object.route_id}<br><strong>Milepoint:</strong> ${object.begin_poin}<br><strong>Demand Rank:</strong> ${object.DemandRank}<br><strong>Town:</strong> ${object.town}<br><strong>Sidewalks:</strong> ${object.Sidewalks ? 'Yes' : 'No'}<hr><strong>Coords (Lon, Lat):</strong> ${object.position[0].toFixed(6)}, ${object.position[1].toFixed(6)}`;
+                             const infoWindow = new google.maps.InfoWindow({ content: infoContent, position: { lat: object.position[1], lng: object.position[0] } });
+                             infoWindow.open(map);
+                         } else { console.warn("Clicked object missing valid position:", object); }
+                     }
+                 }
+             });
+              if (deckOverlay) { deckOverlay.setProps({ layers: [scatterLayer] }); }
+              else { deckOverlay = new deck.GoogleMapsOverlay({ layers: [scatterLayer] }); deckOverlay.setMap(map); }
+         }
+
+        // Filter data function
+        function filterData() {
+            const minRank = parseInt(document.getElementById('rankMin').value);
+            const maxRank = parseInt(document.getElementById('rankMax').value);
+            if (!pointsData) return [];
+            return pointsData.filter(point => {
+                 if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) return false;
+                 const rank = point.DemandRank;
+                 return typeof rank === 'number' && !isNaN(rank) && rank >= minRank && rank <= maxRank;
+            });
+        }
+    </script>
 
     <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRG2xII3nH7HJkp08TKpssRgLkf0OjMBQ&libraries=visualization&callback=initialize"></script>
 
