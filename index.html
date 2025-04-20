@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CTDOT Pedestrian Demand Model</title>
+    <script src="https://unpkg.com/deck.gl@8.9.27/dist.min.js"></script>
+    <script src="https://unpkg.com/@deck.gl/google-maps@8.9.27/dist.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        
+        .info-box {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-width: 250px;
+        }
+        
+        .filters {
+            margin-top: 10px;
+        }
+        
+        .demand-slider {
+            width: 100%;
+            margin: 5px 0;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+        
+        .legend h4 { margin: 0 0 10px; font-size: 16px; }
+        .legend div { padding: 3px 0; font-size: 14px; }
+        .legend span {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            border: 1px solid #666;
+            vertical-align: middle;
+            border-radius: 4px;
+        }
+        
+        /* Make sure Street View controls are visible */
+        .gm-svpc {
+            z-index: 1001 !important;
+        }
+        
+        /* Loading indicator */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        
+        .loading-spinner {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-spinner">
+            <h3>Loading Data...</h3>
+            <p>This may take a moment for the large dataset.</p>
+        </div>
+    </div>
+    
+    <div class="info-box">
+        <h3>Pedestrian Demand Model</h3>
+        <div>Total Points: <span id="totalPoints">Loading...</span></div>
+        
+        <div class="filters">
+            <h4>Filter by Demand Rank</h4>
+            <div>
+                <input type="range" class="demand-slider" id="rankMin" min="1" max="10" value="1">
+                <input type="range" class="demand-slider" id="rankMax" min="1" max="10" value="10">
+                <div>Range: <span id="rankRangeDisplay">1-10</span></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="legend">
+        <h4>Demand Rank</h4>
+        <div><span style="background: #fee0d2;"></span>8-10 (High)</div>
+        <div><span style="background: #fcbba1;"></span>6-7 (Medium-High)</div>
+        <div><span style="background: #fb6a4a;"></span>4-5 (Medium)</div>
+        <div><span style="background: #67000d;"></span>1-3 (Low)</div>
+    </div>
+    
+    <script>
+        let pointsData = [];
+        let deckOverlay;
+        let map;
+        
+        function getColor(rank) {
+            if (rank <= 3) return [103, 0, 13, 220];    // Low - dark red
+            if (rank <= 5) return [251, 106, 74, 220];  // Medium - orange
+            if (rank <= 7) return [252, 187, 161, 220]; // Medium-High - light orange
+            return [254, 224, 210, 220];                // High - light pink
+        }
+        
+        function initialize() {
+            // Create Google Map
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 41.6, lng: -72.7 },
+                zoom: 9,
+                mapTypeId: 'satellite',
+                mapTypeControl: true,
+                mapTypeControlOptions: {
+                    position: google.maps.ControlPosition.TOP_RIGHT
+                },
+                // Ensure Street View controls are visible and functioning
+                streetViewControl: true,
+                streetViewControlOptions: {
+                    position: google.maps.ControlPosition.RIGHT_TOP
+                }
+            });
+            
+            // Add event listener for Street View mode changes
+            const streetViewListener = map.addListener('streetview_changed', function() {
+                // When entering or exiting Street View mode, ensure UI elements stay visible
+                const panorama = map.getStreetView();
+                if (panorama.getVisible()) {
+                    // In Street View mode - ensure "Back to Map" button is visible
+                    panorama.controls[google.maps.ControlPosition.TOP_RIGHT].push(
+                        createBackToMapButton(panorama)
+                    );
+                }
+            });
+            
+            // Load data
+            loadData();
+        }
+        
+        // Create a custom "Back to Map" button for Street View
+        function createBackToMapButton(panorama) {
+            const backButton = document.createElement('button');
+            backButton.textContent = 'Back to Map';
+            backButton.style.backgroundColor = 'white';
+            backButton.style.color = 'black';
+            backButton.style.border = '1px solid #ccc';
+            backButton.style.borderRadius = '4px';
+            backButton.style.padding = '8px 12px';
+            backButton.style.margin = '10px';
+            backButton.style.cursor = 'pointer';
+            backButton.style.fontFamily = 'Arial, sans-serif';
+            backButton.style.fontSize = '14px';
+            
+            backButton.addEventListener('click', function() {
+                panorama.setVisible(false);
+            });
+            
+            return backButton;
+        }
+        
+        async function loadData() {
+            try {
+                // Convert the Dropbox link to a direct download link
+                // Original: https://www.dropbox.com/scl/fi/fop68pia7bzaz8sox1eq6/milepoints_data.json?rlkey=mcv18npy6r7hvydo7db2tkydh&st=4rz8espi&dl=0
+                // Direct:   https://www.dropbox.com/scl/fi/fop68pia7bzaz8sox1eq6/milepoints_data.json?rlkey=mcv18npy6r7hvydo7db2tkydh&st=4rz8espi&dl=1
+                
+                // Change the dl=0 to dl=1 at the end
+                const dropboxLink = "https://www.dropbox.com/scl/fi/fop68pia7bzaz8sox1eq6/milepoints_data.json?rlkey=mcv18npy6r7hvydo7db2tkydh&st=4rz8espi&dl=1";
+                
+                const response = await fetch(dropboxLink);
+                pointsData = await response.json();
+                document.getElementById('totalPoints').textContent = pointsData.length.toLocaleString();
+                createDeckLayer();
+                
+                // Hide loading overlay once data is loaded
+                document.getElementById('loadingOverlay').style.display = 'none';
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('totalPoints').textContent = 'Error loading data';
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+        
+        function createDeckLayer() {
+            const filteredData = filterData();
+            
+            const scatterLayer = new deck.ScatterplotLayer({
+                id: 'demand-points',
+                data: filteredData,
+                getPosition: d => d.position,
+                getFillColor: d => getColor(d.DemandRank),
+                getRadius: d => d.DemandRank * 50,
+                radiusMinPixels: 2,
+                radiusMaxPixels: 20,
+                pickable: true,
+                opacity: 0.8,
+                stroked: true,
+                lineWidthMinPixels: 1,
+                getLineColor: [255, 255, 255, 100],
+                onClick: info => {
+                    if (info.object) {
+                        alert(
+                            `Route: ${info.object.route_id}\n` +
+                            `Milepoint: ${info.object.begin_poin}\n` +
+                            `Demand Rank: ${info.object.DemandRank}\n` +
+                            `Town: ${info.object.town}\n` +
+                            `Sidewalks: ${info.object.Sidewalks ? 'Yes' : 'No'}`
+                        );
+                    }
+                }
+            });
+            
+            if (deckOverlay) {
+                deckOverlay.setProps({ layers: [scatterLayer] });
+            } else {
+                deckOverlay = new deck.GoogleMapsOverlay({ layers: [scatterLayer] });
+                deckOverlay.setMap(map);
+            }
+        }
+        
+        function filterData() {
+            const minRank = parseInt(document.getElementById('rankMin').value);
+            const maxRank = parseInt(document.getElementById('rankMax').value);
+            
+            return pointsData.filter(point => {
+                return point.DemandRank >= minRank && point.DemandRank <= maxRank;
+            });
+        }
+        
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            const rangeInputs = document.querySelectorAll('.demand-slider');
+            rangeInputs.forEach(input => {
+                input.addEventListener('input', () => {
+                    const min = document.getElementById('rankMin').value;
+                    const max = document.getElementById('rankMax').value;
+                    document.getElementById('rankRangeDisplay').textContent = `${min}-${max}`;
+                    createDeckLayer();
+                });
+            });
+        });
+        
+        // Function to check if Google Maps is loaded
+        function waitForGoogleMaps() {
+            if (typeof google !== 'undefined' && typeof google.maps !== 'undefined') {
+                initialize();
+            } else {
+                setTimeout(waitForGoogleMaps, 100);
+            }
+        }
+        
+        // Initialize when Google Maps is ready
+        if (document.readyState === 'complete') {
+            waitForGoogleMaps();
+        } else {
+            window.addEventListener('load', waitForGoogleMaps);
+        }
+    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRG2xII3nH7HJkp08TKpssRgLkf0OjMBQ&libraries=visualization"></script>
+</body>
+</html>
