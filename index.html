@@ -56,38 +56,10 @@
         .gm-svpc {
             z-index: 1001 !important;
         }
-        
-        /* Loading indicator */
-        .loading-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 2000;
-        }
-        
-        .loading-spinner {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-        }
     </style>
 </head>
 <body>
     <div id="map"></div>
-    
-    <div id="loadingOverlay" class="loading-overlay">
-        <div class="loading-spinner">
-            <h3>Loading Data...</h3>
-            <p>Please wait while we load the map data.</p>
-        </div>
-    </div>
     
     <div class="info-box">
         <h3>Pedestrian Demand Model</h3>
@@ -152,8 +124,8 @@
                 }
             });
             
-            // Load data
-            loadSampleData();
+            // Generate sample data
+            generateSampleData();
         }
         
         // Create a custom "Back to Map" button for Street View
@@ -177,59 +149,74 @@
             return backButton;
         }
         
-        function loadSampleData() {
-            // Since there are CORS issues with Dropbox, we'll generate sample data for demo purposes
+        function generateSampleData() {
             const towns = ['Hartford', 'New Haven', 'Bridgeport', 'Stamford', 'Waterbury', 'Norwalk', 'Danbury', 'New Britain'];
             const sampleData = [];
             
-            // Generate sample data that represents the CTDOT pedestrian demand model
-            for (let i = 0; i < 5000; i++) {
-                // Create a cluster of points along routes
-                const baseLat = 41.6 + (Math.random() - 0.5) * 1;
-                const baseLng = -72.7 + (Math.random() - 0.5) * 1.3;
-                const routeId = `RT-${Math.floor(Math.random() * 100 + 1)}`;
-                
-                // Create a stretch of points along the route
-                const pointCount = Math.floor(Math.random() * 10) + 5;
+            // Create realistic clusters of data along highway corridors
+            const createRouteCluster = (routeId, baseLat, baseLng, points, variation) => {
                 const direction = Math.random() * Math.PI * 2;
+                const speedFactor = Math.random() * 0.2 + 0.1; // Different routes have different density
                 
-                for (let j = 0; j < pointCount; j++) {
-                    // Create points along a line with some variance
-                    const distance = j * 0.003;
-                    const jitter = 0.0005;
-                    const lat = baseLat + Math.cos(direction) * distance + (Math.random() - 0.5) * jitter;
-                    const lng = baseLng + Math.sin(direction) * distance + (Math.random() - 0.5) * jitter;
+                for (let i = 0; i < points; i++) {
+                    const distance = i * speedFactor;
+                    const jitter = variation * (Math.random() - 0.5);
+                    const jitterLat = variation * (Math.random() - 0.5);
+                    const lat = baseLat + Math.cos(direction) * distance + jitterLat;
+                    const lng = baseLng + Math.sin(direction) * distance + jitter;
                     
-                    // Assign higher demand rank to urban areas (use distance from center to simulate)
-                    const distanceFromCenter = Math.sqrt(
-                        Math.pow(lat - 41.6, 2) + Math.pow(lng + 72.7, 2)
-                    );
+                    // Make urban areas have higher demand ranks
+                    let townIndex = Math.floor(Math.random() * towns.length);
                     let demandRank;
-                    if (distanceFromCenter < 0.1) {
-                        demandRank = Math.floor(Math.random() * 3) + 8; // 8-10 in urban core
-                    } else if (distanceFromCenter < 0.3) {
-                        demandRank = Math.floor(Math.random() * 2) + 6; // 6-7 in medium urban
-                    } else if (distanceFromCenter < 0.6) {
-                        demandRank = Math.floor(Math.random() * 2) + 4; // 4-5 in suburban
-                    } else {
-                        demandRank = Math.floor(Math.random() * 3) + 1; // 1-3 in rural
+                    
+                    // For the first 20% of towns, use higher rank (simulate urban areas)
+                    if (townIndex < towns.length * 0.2) {
+                        demandRank = Math.floor(Math.random() * 3) + 8; // 8-10
+                    } 
+                    // For the next 30%, medium-high rank
+                    else if (townIndex < towns.length * 0.5) {
+                        demandRank = Math.floor(Math.random() * 2) + 6; // 6-7
+                    }
+                    // For the next 30%, medium rank
+                    else if (townIndex < towns.length * 0.8) {
+                        demandRank = Math.floor(Math.random() * 2) + 4; // 4-5
+                    }
+                    // For the rest, low rank (rural areas)
+                    else {
+                        demandRank = Math.floor(Math.random() * 3) + 1; // 1-3
                     }
                     
                     sampleData.push({
                         position: [lng, lat],
                         DemandRank: demandRank,
                         route_id: routeId,
-                        begin_poin: j * 0.1,
-                        Sidewalks: Math.random() > 0.7 ? 1 : 0,
-                        town: towns[Math.floor(Math.random() * towns.length)]
+                        begin_poin: parseFloat((i * 0.1).toFixed(1)),
+                        Sidewalks: demandRank > 5 ? 1 : Math.random() > 0.7 ? 1 : 0,
+                        town: towns[townIndex]
                     });
                 }
+            };
+            
+            // Create main routes in CT
+            createRouteCluster('RT-91', 41.55, -72.65, 400, 0.002); // I-91
+            createRouteCluster('RT-84', 41.78, -72.52, 400, 0.002); // I-84
+            createRouteCluster('RT-95', 41.30, -72.92, 400, 0.001); // I-95
+            createRouteCluster('RT-15', 41.27, -73.20, 300, 0.005); // Merritt Parkway
+            createRouteCluster('RT-9', 41.53, -72.64, 200, 0.01);   // Route 9
+            createRouteCluster('RT-8', 41.42, -73.05, 200, 0.01);   // Route 8
+            createRouteCluster('RT-2', 41.64, -72.05, 200, 0.01);   // Route 2
+            
+            // Create some smaller state routes
+            for (let i = 0; i < 25; i++) {
+                const routeId = `RT-${Math.floor(Math.random() * 200) + 1}`;
+                const baseLat = 41.1 + Math.random() * 1;
+                const baseLng = -73.7 + Math.random() * 1.5;
+                createRouteCluster(routeId, baseLat, baseLng, 50 + Math.floor(Math.random() * 100), 0.01);
             }
             
             // Use the sample data
             pointsData = sampleData;
             document.getElementById('totalPoints').textContent = pointsData.length.toLocaleString();
-            document.getElementById('loadingOverlay').style.display = 'none';
             createDeckLayer();
         }
         
