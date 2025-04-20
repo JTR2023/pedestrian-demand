@@ -4,6 +4,7 @@
     <title>CTDOT Pedestrian Demand Model</title>
     <script src="https://unpkg.com/deck.gl@8.9.27/dist.min.js"></script>
     <script src="https://unpkg.com/@deck.gl/google-maps@8.9.27/dist.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
         #map { width: 100vw; height: 100vh; }
@@ -78,6 +79,20 @@
         .gm-svpc {
             z-index: 1001 !important;
         }
+        
+        /* Coordinate system selection */
+        .coord-system {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+        }
+        
+        .coord-system select {
+            width: 100%;
+            padding: 5px;
+            margin-top: 5px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -99,6 +114,16 @@
                 <div>Range: <span id="rankRangeDisplay">1-10</span></div>
             </div>
         </div>
+        
+        <div class="coord-system">
+            <h4>Coordinate System</h4>
+            <select id="coordSystem" onchange="updateCoordinateSystem()">
+                <option value="wgs84">WGS84 (Latitude/Longitude)</option>
+                <option value="nad83_ct" selected>NAD83 Connecticut State Plane (ft)</option>
+                <option value="nad83_ct_meters">NAD83 Connecticut State Plane (m)</option>
+                <option value="swap">Swap X/Y Coordinates</option>
+            </select>
+        </div>
     </div>
     
     <div class="legend">
@@ -111,8 +136,19 @@
     
     <script>
         let pointsData = [];
+        let originalPointsData = [];
         let deckOverlay;
         let map;
+        
+        // Define coordinate system transformations
+        // NAD83 Connecticut State Plane (ft)
+        proj4.defs('EPSG:2234', '+proj=lcc +lat_1=41.2 +lat_2=41.86666666666667 +lat_0=40.83333333333334 +lon_0=-72.75 +x_0=304800 +y_0=152400 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=us-ft +no_defs');
+        
+        // NAD83 Connecticut State Plane (m)
+        proj4.defs('EPSG:6433', '+proj=lcc +lat_1=41.2 +lat_2=41.86666666666667 +lat_0=40.83333333333334 +lon_0=-72.75 +x_0=304800 +y_0=152400 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
+        
+        // WGS84
+        proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs');
         
         function getColor(rank) {
             if (rank <= 3) return [103, 0, 13, 220];    // Low - dark red
@@ -229,17 +265,17 @@
                 const text = new TextDecoder("utf-8").decode(chunksAll);
                 
                 // Parse the JSON
-                pointsData = JSON.parse(text);
+                originalPointsData = JSON.parse(text);
                 
                 // Update total points counter
-                document.getElementById('totalPoints').textContent = pointsData.length.toLocaleString();
+                document.getElementById('totalPoints').textContent = originalPointsData.length.toLocaleString();
                 
                 // Update loading status
                 loadingStatus.textContent = "Data loaded successfully!";
                 progressFill.style.width = "100%";
                 
-                // Create the visualization
-                createDeckLayer();
+                // Apply coordinate transformation based on the selected system
+                updateCoordinateSystem();
                 
             } catch (error) {
                 console.error('Error loading data:', error);
@@ -247,6 +283,51 @@
                 progressFill.style.width = "100%";
                 progressFill.style.backgroundColor = "#ff3333";
             }
+        }
+        
+        function updateCoordinateSystem() {
+            const system = document.getElementById('coordSystem').value;
+            
+            if (!originalPointsData || originalPointsData.length === 0) {
+                return;
+            }
+            
+            pointsData = originalPointsData.map(point => {
+                const newPoint = {...point};
+                
+                // Get original position
+                const origX = point.position[0];
+                const origY = point.position[1];
+                
+                // Transform based on selected coordinate system
+                if (system === 'wgs84') {
+                    // Assume data is already in WGS84
+                    newPoint.position = [origX, origY];
+                }
+                else if (system === 'nad83_ct') {
+                    // Convert from NAD83 Connecticut State Plane (ft) to WGS84
+                    const result = proj4('EPSG:2234', 'EPSG:4326', [origX, origY]);
+                    newPoint.position = result;
+                }
+                else if (system === 'nad83_ct_meters') {
+                    // Convert from NAD83 Connecticut State Plane (m) to WGS84
+                    const result = proj4('EPSG:6433', 'EPSG:4326', [origX, origY]);
+                    newPoint.position = result;
+                }
+                else if (system === 'swap') {
+                    // Sometimes coordinates are in [y, x] order instead of [x, y]
+                    newPoint.position = [origY, origX];
+                }
+                
+                return newPoint;
+            });
+            
+            // Update the visualization
+            createDeckLayer();
+            
+            // Center map on Connecticut
+            map.setCenter({ lat: 41.6, lng: -72.7 });
+            map.setZoom(9);
         }
         
         function createDeckLayer() {
