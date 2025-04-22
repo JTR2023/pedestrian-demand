@@ -51,7 +51,11 @@
          </div>
          </div>
     <div class="legend"> <h4>Demand Rank</h4>
-         <div><span style="background: rgb(103, 0, 13);"></span>8-10 (High)</div>         <div><span style="background: rgb(251, 106, 74);"></span>6-7 (Medium-High)</div> <div><span style="background: rgb(252, 187, 161);"></span>4-5 (Medium)</div>      <div><span style="background: rgb(254, 224, 210);"></span>1-3 (Low)</div>         </div>
+         <div><span style="background: rgb(103, 0, 13);"></span>8-10 (High)</div>         
+         <div><span style="background: rgb(251, 106, 74);"></span>6-7 (Medium-High)</div> 
+         <div><span style="background: rgb(252, 187, 161);"></span>4-5 (Medium-Low)</div>      
+         <div><span style="background: rgb(254, 224, 210);"></span>1-3 (Low)</div>         
+    </div>
 
 
     <script>
@@ -68,7 +72,7 @@
             // Inverted: Darkest for High, Lightest for Low
             if (rank >= 8) return [103, 0, 13, 220];    // High (8-10) -> Darkest Red
             if (rank >= 6) return [251, 106, 74, 220];  // Medium-High (6-7) -> Orange
-            if (rank >= 4) return [252, 187, 161, 220]; // Medium (4-5) -> Light Orange
+            if (rank >= 4) return [252, 187, 161, 220]; // Medium-Low (4-5) -> Light Orange
             return [254, 224, 210, 220];                // Low (1-3) -> Lightest Pink
         }
 
