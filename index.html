@@ -30,8 +30,36 @@
         .legend div { padding: 3px 0; font-size: 14px; }
         .legend span { display: inline-block; width: 20px; height: 20px; margin-right: 8px; border: 1px solid #666; vertical-align: middle; border-radius: 4px; }
         .gm-svpc { z-index: 1001 !important; }
-
         .hidden-in-streetview { opacity: 0; pointer-events: none; }
+        
+        /* Sidewalk filter button styles */
+        .filter-buttons {
+            margin-top: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .filter-button {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            background-color: #f8f8f8;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+        .filter-button:hover {
+            background-color: #e8e8e8;
+        }
+        .filter-button.active {
+            background-color: #0066cc;
+            color: white;
+            border-color: #0055aa;
+        }
+        .filter-label {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
     </style>
 
 </head>
@@ -48,8 +76,16 @@
                  <input type="range" class="demand-slider" id="rankMax" min="1" max="10" value="10">
                  <div>Range: <span id="rankRangeDisplay">1-10</span></div>
              </div>
+             
+             <!-- New Sidewalk Filter Section -->
+             <div class="filter-buttons">
+                 <div class="filter-label">Sidewalk Filter:</div>
+                 <button class="filter-button active" id="sidewalkAll">Show All</button>
+                 <button class="filter-button" id="sidewalkYes">With Sidewalks</button>
+                 <button class="filter-button" id="sidewalkNo">Without Sidewalks</button>
+             </div>
          </div>
-         </div>
+    </div>
     <div class="legend"> <h4>Demand Rank</h4>
          <div><span style="background: rgb(103, 0, 13);"></span>8-10 (High)</div>         
          <div><span style="background: rgb(251, 106, 74);"></span>6-7 (Medium-High)</div> 
@@ -64,6 +100,7 @@
         let map;
         let infoBoxElement;
         let legendElement;
+        let currentSidewalkFilter = 'all'; // Default sidewalk filter state
 
         const dataUrl = "https://storage.googleapis.com/pedestrian-demand-data/milepoints_data.json";
 
@@ -104,21 +141,64 @@
             });
 
             // Add event listeners for sliders
-             const rangeInputs = document.querySelectorAll('.demand-slider');
-             const rankMinInput = document.getElementById('rankMin');
-             const rankMaxInput = document.getElementById('rankMax');
-             const rankDisplay = document.getElementById('rankRangeDisplay');
-             function updateSliderDisplay() {
-                 const min = rankMinInput.value; const max = rankMaxInput.value;
-                 if (parseInt(min) > parseInt(max)) { if (this.id === 'rankMin') { rankMaxInput.value = min; } else { rankMinInput.value = max; } }
-                 rankDisplay.textContent = `${rankMinInput.value}-${rankMaxInput.value}`;
-                 if (pointsData && pointsData.length > 0 && map && deckOverlay) { createDeckLayer(); }
-             }
-             rangeInputs.forEach(input => { input.addEventListener('input', updateSliderDisplay); });
-             updateSliderDisplay();
+            const rangeInputs = document.querySelectorAll('.demand-slider');
+            const rankMinInput = document.getElementById('rankMin');
+            const rankMaxInput = document.getElementById('rankMax');
+            const rankDisplay = document.getElementById('rankRangeDisplay');
+            function updateSliderDisplay() {
+                const min = rankMinInput.value; const max = rankMaxInput.value;
+                if (parseInt(min) > parseInt(max)) { if (this.id === 'rankMin') { rankMaxInput.value = min; } else { rankMinInput.value = max; } }
+                rankDisplay.textContent = `${rankMinInput.value}-${rankMaxInput.value}`;
+                if (pointsData && pointsData.length > 0 && map && deckOverlay) { createDeckLayer(); }
+            }
+            rangeInputs.forEach(input => { input.addEventListener('input', updateSliderDisplay); });
+            updateSliderDisplay();
+            
+            // Add event listeners for sidewalk filter buttons
+            setupSidewalkFilters();
 
             // Load data from GCS
             loadDataFromGCS();
+        }
+        
+        // Set up sidewalk filter buttons
+        function setupSidewalkFilters() {
+            const allButton = document.getElementById('sidewalkAll');
+            const yesButton = document.getElementById('sidewalkYes');
+            const noButton = document.getElementById('sidewalkNo');
+            
+            // Function to update button states
+            function updateButtonStates(activeButton) {
+                allButton.classList.remove('active');
+                yesButton.classList.remove('active');
+                noButton.classList.remove('active');
+                activeButton.classList.add('active');
+            }
+            
+            // Event listeners for filter buttons
+            allButton.addEventListener('click', function() {
+                currentSidewalkFilter = 'all';
+                updateButtonStates(this);
+                if (pointsData && pointsData.length > 0 && map && deckOverlay) {
+                    createDeckLayer();
+                }
+            });
+            
+            yesButton.addEventListener('click', function() {
+                currentSidewalkFilter = 'yes';
+                updateButtonStates(this);
+                if (pointsData && pointsData.length > 0 && map && deckOverlay) {
+                    createDeckLayer();
+                }
+            });
+            
+            noButton.addEventListener('click', function() {
+                currentSidewalkFilter = 'no';
+                updateButtonStates(this);
+                if (pointsData && pointsData.length > 0 && map && deckOverlay) {
+                    createDeckLayer();
+                }
+            });
         }
 
         // Load data from GCS function
@@ -170,37 +250,72 @@
 
         // Create Deck layer function
         function createDeckLayer() {
-             const filteredData = filterData();
-             console.log(`Rendering layer with ${filteredData.length} filtered points.`);
+            const filteredData = filterData();
+            console.log(`Rendering layer with ${filteredData.length} filtered points.`);
+            
+            // Count points by filter category
+            let sidewalkCounts = {
+                yes: filteredData.filter(p => p.Sidewalks === 1).length,
+                no: filteredData.filter(p => p.Sidewalks === 0).length
+            };
+            console.log(`Filtered data includes: ${sidewalkCounts.yes} points with sidewalks, ${sidewalkCounts.no} points without sidewalks`);
 
-             const scatterLayer = new deck.ScatterplotLayer({
-                 id: 'demand-points', data: filteredData, getPosition: d => d.position,
-                 getFillColor: d => getColor(d.DemandRank), // Uses updated getColor
-                 getRadius: 15, radiusUnits: 'meters',
-                 radiusMinPixels: 2, radiusMaxPixels: 20, pickable: true, opacity: 0.7, stroked: false,
-                 onClick: ({object, x, y}) => { /* infoWindow */
-                    if (object) {
-                         if (object.position && !isNaN(object.position[0]) && !isNaN(object.position[1])) {
-                             const infoContent = `<strong>Route:</strong> ${object.route_id}<br><strong>Milepoint:</strong> ${object.begin_poin}<br><strong>Demand Rank:</strong> ${object.DemandRank}<br><strong>Town:</strong> ${object.town}<br><strong>Sidewalks:</strong> ${object.Sidewalks ? 'Yes' : 'No'}<hr><strong>Coords (Lon, Lat):</strong> ${object.position[0].toFixed(6)}, ${object.position[1].toFixed(6)}`;
-                             const infoWindow = new google.maps.InfoWindow({ content: infoContent, position: { lat: object.position[1], lng: object.position[0] } });
-                             infoWindow.open(map);
-                         } else { console.warn("Clicked object missing valid position:", object); }
-                     }
-                 }
-             });
-              if (deckOverlay) { deckOverlay.setProps({ layers: [scatterLayer] }); }
-              else { deckOverlay = new deck.GoogleMapsOverlay({ layers: [scatterLayer] }); deckOverlay.setMap(map); }
-         }
+            const scatterLayer = new deck.ScatterplotLayer({
+                id: 'demand-points', 
+                data: filteredData, 
+                getPosition: d => d.position,
+                getFillColor: d => getColor(d.DemandRank), // Uses updated getColor
+                getRadius: 15, 
+                radiusUnits: 'meters',
+                radiusMinPixels: 2, 
+                radiusMaxPixels: 20, 
+                pickable: true, 
+                opacity: 0.7, 
+                stroked: false,
+                onClick: ({object, x, y}) => { /* infoWindow */
+                   if (object) {
+                        if (object.position && !isNaN(object.position[0]) && !isNaN(object.position[1])) {
+                            const infoContent = `<strong>Route:</strong> ${object.route_id}<br><strong>Milepoint:</strong> ${object.begin_poin}<br><strong>Demand Rank:</strong> ${object.DemandRank}<br><strong>Town:</strong> ${object.town}<br><strong>Sidewalks:</strong> ${object.Sidewalks ? 'Yes' : 'No'}<hr><strong>Coords (Lon, Lat):</strong> ${object.position[0].toFixed(6)}, ${object.position[1].toFixed(6)}`;
+                            const infoWindow = new google.maps.InfoWindow({ content: infoContent, position: { lat: object.position[1], lng: object.position[0] } });
+                            infoWindow.open(map);
+                        } else { console.warn("Clicked object missing valid position:", object); }
+                    }
+                }
+            });
+            
+            if (deckOverlay) { 
+                deckOverlay.setProps({ layers: [scatterLayer] }); 
+            }
+            else { 
+                deckOverlay = new deck.GoogleMapsOverlay({ layers: [scatterLayer] }); 
+                deckOverlay.setMap(map); 
+            }
+        }
 
         // Filter data function
         function filterData() {
             const minRank = parseInt(document.getElementById('rankMin').value);
             const maxRank = parseInt(document.getElementById('rankMax').value);
+            
             if (!pointsData) return [];
+            
             return pointsData.filter(point => {
-                 if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) return false;
-                 const rank = point.DemandRank;
-                 return typeof rank === 'number' && !isNaN(rank) && rank >= minRank && rank <= maxRank;
+                if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) return false;
+                
+                // Apply rank filter
+                const rank = point.DemandRank;
+                const rankMatch = typeof rank === 'number' && !isNaN(rank) && rank >= minRank && rank <= maxRank;
+                
+                // Apply sidewalk filter
+                let sidewalkMatch = true;
+                if (currentSidewalkFilter === 'yes') {
+                    sidewalkMatch = point.Sidewalks === 1;
+                } else if (currentSidewalkFilter === 'no') {
+                    sidewalkMatch = point.Sidewalks === 0;
+                }
+                
+                // Point must match both filters
+                return rankMatch && sidewalkMatch;
             });
         }
     </script>
