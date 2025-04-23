@@ -1,111 +1,377 @@
-// This code adds a filter to hide limited access highways using the AccessCont field values
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CTDOT Pedestrian Demand Model</title>
+    <script src="https://unpkg.com/deck.gl@8.9.27/dist.min.js"></script>
+    <script src="https://unpkg.com/@deck.gl/google-maps@8.9.27/dist.min.js"></script>
 
-// Step 1: Add this button to your filter buttons section:
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        .info-box {
+            position: absolute;
+            top: 90px; /* Kept the lower position */
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3); z-index: 1000; max-width: 280px; /* Adjusted max-width slightly */
+            transition: opacity 0.3s ease-in-out;
+         }
+        .loading-status { margin-top: 5px; font-size: 14px; color: #666; }
+        .progress-bar { width: 100%; height: 10px; background-color: #eee; border-radius: 5px; margin-top: 5px; overflow: hidden; }
+        .progress-fill { height: 100%; background-color: #0066cc; width: 0%; transition: width 0.3s; }
+        .filters { margin-top: 15px; }
+        .filters h4 { margin: 10px 0 5px; font-size: 14px; } /* Adjusted heading margin/size */
+        .demand-slider { width: 100%; margin: 5px 0; }
+        .legend {
+            position: absolute; bottom: 30px; left: 20px; background: rgba(255, 255, 255, 0.95);
+            padding: 15px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000; transition: opacity 0.3s ease-in-out;
+         }
+        .legend h4 { margin: 0 0 10px; font-size: 16px; }
+        .legend div { padding: 3px 0; font-size: 14px; }
+        .legend span { display: inline-block; width: 20px; height: 20px; margin-right: 8px; border: 1px solid #666; vertical-align: middle; border-radius: 4px; }
+        .gm-svpc { z-index: 1001 !important; } /* Ensure Street View UI is above legend/infobox */
 
-<div class="filter-buttons" style="margin-top: 10px;">
-    <div class="filter-label">Road Type Filter:</div>
-    <button class="filter-button" id="hideHighAccessBtn">Hide Limited Access Highways</button>
-</div>
+        .hidden-in-streetview { opacity: 0; pointer-events: none; }
 
-// Step 2: Add this variable to your global variables:
-
-let hideHighAccessRoads = false;
-
-// Step 3: Add this setup function:
-
-function setupAccessControlFilter() {
-    const hideHighAccessBtn = document.getElementById('hideHighAccessBtn');
-    if (!hideHighAccessBtn) return;
-    
-    hideHighAccessBtn.addEventListener('click', function() {
-        hideHighAccessRoads = !hideHighAccessRoads;
-        
-        // Update button appearance
-        if (hideHighAccessRoads) {
-            this.classList.add('active');
-            this.textContent = 'Show Limited Access Highways';
-        } else {
-            this.classList.remove('active');
-            this.textContent = 'Hide Limited Access Highways';
+        /* --- Styles for New Filter Button --- */
+        .filter-label {
+            display: block; /* Make label take full width */
+            margin-bottom: 5px; /* Add space below label */
+            font-weight: bold;
+            font-size: 14px;
         }
-        
-        // Update the map
-        if (pointsData && pointsData.length > 0 && map && deckOverlay) {
-            createDeckLayer();
+        .filter-button {
+            padding: 6px 12px; /* Slightly larger padding */
+            cursor: pointer;
+            border: 1px solid #ccc;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            font-size: 13px; /* Match other text */
+            width: 100%; /* Make button take full width */
+            text-align: center;
+            margin-top: 5px; /* Add space above button */
+            box-sizing: border-box; /* Include padding/border in width */
         }
-    });
-}
-
-// Step 4: Call this in your initialize function:
-// setupAccessControlFilter();
-
-// Step 5: Update your filterData function to include the access control filter:
-
-function filterData() {
-    const minRank = parseInt(document.getElementById('rankMin').value);
-    const maxRank = parseInt(document.getElementById('rankMax').value);
-    
-    if (!pointsData) return [];
-    
-    return pointsData.filter(point => {
-        if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) return false;
-        
-        // Apply rank filter
-        const rank = point.DemandRank;
-        const rankMatch = typeof rank === 'number' && !isNaN(rank) && rank >= minRank && rank <= maxRank;
-        
-        // Apply sidewalk filter
-        let sidewalkMatch = true;
-        if (currentSidewalkFilter === 'yes') {
-            sidewalkMatch = point.Sidewalks === 1;
-        } else if (currentSidewalkFilter === 'no') {
-            sidewalkMatch = point.Sidewalks === 0;
+        .filter-button.active {
+            background-color: #0066cc;
+            color: white;
+            border-color: #005cbf;
         }
-        
-        // Apply town filter
-        let townMatch = true;
-        if (currentTownFilter !== 'all') {
-            townMatch = point.town === currentTownFilter;
+        .filter-buttons {
+             margin-top: 15px; /* Add space above this filter group */
         }
-        
-        // Apply access control filter using AccessCont values
-        let accessControlMatch = true;
-        if (hideHighAccessRoads) {
-            // Filter out high access control roads (codes 1-4 represent full control)
-            // Code 1: Full Control Parkways
-            // Code 2: Full Control - Other Divided Highways, 4+ lanes
-            // Code 3: Full Control - Divided, 2 lanes
-            // Code 4: Full Control - Undivided Highways
-            
-            const accessCode = point.AccessCont;
-            // Check if it's one of the full control types (1-4)
-            accessControlMatch = !(accessCode >= 1 && accessCode <= 4);
+         /* --- End Styles for New Filter Button --- */
+
+    </style>
+
+</head>
+<body>
+    <div id="map"></div>
+    <div class="info-box">
+        <h3>Pedestrian Demand Model</h3>
+        <div>Total Points: <span id="totalPoints">Loading...</span></div>
+        <div class="loading-status" id="loadingStatus">Initializing...</div>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+
+        <div class="filters">
+            <h4>Filter by Demand Rank</h4>
+            <div>
+                <input type="range" class="demand-slider" id="rankMin" min="1" max="10" value="1">
+                <input type="range" class="demand-slider" id="rankMax" min="1" max="10" value="10">
+                <div>Range: <span id="rankRangeDisplay">1-10</span></div>
+            </div>
+
+            <div class="filter-buttons">
+                 <div class="filter-label">Road Type Filter:</div>
+                 <button class="filter-button" id="hideHighAccessBtn">Hide Limited Access Highways</button>
+            </div>
+            </div>
+     </div>
+
+    <div class="legend">
+        <h4>Demand Rank</h4>
+        <div><span style="background: rgb(103, 0, 13);"></span>8-10 (High)</div>
+        <div><span style="background: rgb(251, 106, 74);"></span>6-7 (Medium-High)</div>
+        <div><span style="background: rgb(252, 187, 161);"></span>4-5 (Medium-Low)</div>
+        <div><span style="background: rgb(254, 224, 210);"></span>1-3 (Low)</div>
+     </div>
+
+
+    <script>
+        let pointsData = [];
+        let deckOverlay;
+        let map;
+        let infoBoxElement;
+        let legendElement;
+        let hideHighAccessRoads = false; // ** ADDED Global variable for access filter state **
+
+        const dataUrl = "https://storage.googleapis.com/pedestrian-demand-data/milepoints_data.json";
+
+        // Color function remains the same
+        function getColor(rank) {
+            if (rank >= 8) return [103, 0, 13, 220];    // High (8-10) -> Darkest Red
+            if (rank >= 6) return [251, 106, 74, 220];  // Medium-High (6-7) -> Orange
+            if (rank >= 4) return [252, 187, 161, 220]; // Medium-Low (4-5) -> Light Orange
+            return [254, 224, 210, 220];               // Low (1-3) -> Lightest Pink
         }
-        
-        // Point must match all filters
-        return rankMatch && sidewalkMatch && townMatch && accessControlMatch;
-    });
-}
 
-// Step 6: Add a log message when filtering to verify the access control filter is working:
+        // Initialize Google Map
+        function initialize() {
+            console.log("Initialize function called by Maps API.");
+            infoBoxElement = document.querySelector('.info-box');
+            legendElement = document.querySelector('.legend');
+            document.getElementById('loadingStatus').textContent = "Initializing map...";
 
-function createDeckLayer() {
-    const filteredData = filterData();
-    
-    // Log statistics about filtered data
-    if (hideHighAccessRoads) {
-        const totalPoints = filteredData.length;
-        const accessCounts = {};
-        
-        // Count points by access control type
-        filteredData.forEach(point => {
-            const accessCode = point.AccessCont;
-            accessCounts[accessCode] = (accessCounts[accessCode] || 0) + 1;
-        });
-        
-        console.log(`Filtered out limited access highways. Remaining points: ${totalPoints}`);
-        console.log('Points by access control type:', accessCounts);
-    }
-    
-    // Rest of your existing createDeckLayer function...
-}
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 41.6, lng: -72.7 }, zoom: 9, mapTypeId: 'satellite',
+                mapTypeControl: true, mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_RIGHT },
+                streetViewControl: true, streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP }
+             });
+
+            // Street View Visibility Toggle
+            map.addListener('streetview_changed', () => {
+                const panorama = map.getStreetView();
+                if (panorama && panorama.getVisible()) {
+                    console.log("Entering Street View - hiding UI");
+                    if(infoBoxElement) infoBoxElement.classList.add('hidden-in-streetview');
+                    if(legendElement) legendElement.classList.add('hidden-in-streetview');
+                } else {
+                    console.log("Exiting Street View - showing UI");
+                    if(infoBoxElement) infoBoxElement.classList.remove('hidden-in-streetview');
+                    if(legendElement) legendElement.classList.remove('hidden-in-streetview');
+                }
+             });
+
+            // Add event listeners for sliders
+            const rangeInputs = document.querySelectorAll('.demand-slider');
+            const rankMinInput = document.getElementById('rankMin');
+            const rankMaxInput = document.getElementById('rankMax');
+            const rankDisplay = document.getElementById('rankRangeDisplay');
+
+            function updateSliderDisplay() {
+                 const min = rankMinInput.value; const max = rankMaxInput.value;
+                 // Prevent min from exceeding max and vice-versa
+                 if (parseInt(min) > parseInt(max)) {
+                     if (this.id === 'rankMin') { // If min slider caused the overlap
+                         rankMaxInput.value = min;
+                     } else { // If max slider caused the overlap
+                         rankMinInput.value = max;
+                     }
+                 }
+                 // Update display using the possibly adjusted values
+                 rankDisplay.textContent = `${rankMinInput.value}-${rankMaxInput.value}`;
+                 // Update map layer if data is loaded
+                 if (pointsData && pointsData.length > 0 && map && deckOverlay) {
+                     createDeckLayer();
+                 }
+            }
+            rangeInputs.forEach(input => { input.addEventListener('input', updateSliderDisplay); });
+            updateSliderDisplay(); // Call it once initially to set the display
+
+            setupAccessControlFilter(); // ** ADDED call to set up the new filter **
+
+            // Load data from GCS
+            loadDataFromGCS();
+        }
+
+        // Load data from GCS function (unchanged, but added comments for clarity)
+        async function loadDataFromGCS() {
+            const loadingStatus = document.getElementById('loadingStatus');
+            const progressFill = document.getElementById('progressFill');
+            const totalPointsSpan = document.getElementById('totalPoints');
+            try {
+                loadingStatus.textContent = "Fetching data from GCS...";
+                totalPointsSpan.textContent = "Fetching...";
+                progressFill.style.width = "5%";
+                progressFill.style.backgroundColor = "#0066cc"; // Reset color on new load
+
+                const response = await fetch(dataUrl);
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+
+                // Stream and report progress
+                const reader = response.body.getReader();
+                const contentLength = +response.headers.get('Content-Length');
+                let receivedLength = 0;
+                let chunks = [];
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    receivedLength += value.length;
+                    if (contentLength) { // If Content-Length is available
+                        const progress = Math.round((receivedLength / contentLength) * 100);
+                        progressFill.style.width = `${progress}%`;
+                        loadingStatus.textContent = `Loading data: ${progress}%`;
+                    } else { // Fallback if no Content-Length
+                        loadingStatus.textContent = `Loading data: ${Math.round(receivedLength / 1024 / 1024)} MB received`;
+                    }
+                }
+                loadingStatus.textContent = "Processing data...";
+                progressFill.style.width = `100%`;
+
+                // Combine chunks and decode
+                let chunksAll = new Uint8Array(receivedLength);
+                let position = 0;
+                for (let chunk of chunks) {
+                    chunksAll.set(chunk, position);
+                    position += chunk.length;
+                }
+                const text = new TextDecoder("utf-8").decode(chunksAll);
+
+                // Parse JSON
+                pointsData = JSON.parse(text);
+                console.log(`Parsed ${pointsData.length} raw data points.`);
+                if (!Array.isArray(pointsData)) {
+                    throw new Error("Parsed data is not an array.");
+                }
+                if (pointsData.length === 0) {
+                    console.warn("Warning: Parsed data array is empty.");
+                    // No need to throw an error, just proceed with empty data
+                }
+
+                // Update UI
+                totalPointsSpan.textContent = pointsData.length.toLocaleString();
+                loadingStatus.textContent = "Data loaded. Creating map layer...";
+                createDeckLayer(); // Create the initial layer
+                loadingStatus.textContent = "Map updated.";
+
+            } catch (error) {
+                console.error('Error loading or processing data:', error);
+                loadingStatus.textContent = `Error: ${error.message}`;
+                totalPointsSpan.textContent = "Error";
+                progressFill.style.width = "100%";
+                progressFill.style.backgroundColor = "#ff3333"; // Error color
+            }
+        }
+
+        // Create Deck layer function (unchanged)
+        function createDeckLayer() {
+             const filteredData = filterData(); // Get filtered data
+             console.log(`Rendering layer with ${filteredData.length} filtered points.`);
+             document.getElementById('totalPoints').textContent = filteredData.length.toLocaleString(); // Update displayed count
+
+             const scatterLayer = new deck.ScatterplotLayer({
+                 id: 'demand-points',
+                 data: filteredData,
+                 getPosition: d => d.position,
+                 getFillColor: d => getColor(d.DemandRank), // Uses updated getColor
+                 getRadius: 15,
+                 radiusUnits: 'meters',
+                 radiusMinPixels: 2,
+                 radiusMaxPixels: 20,
+                 pickable: true,
+                 opacity: 0.7,
+                 stroked: false, // No outline for better performance/visuals at scale
+                 onClick: ({object, x, y}) => {
+                     if (object) {
+                         // Validate position data before creating InfoWindow
+                         if (object.position && Array.isArray(object.position) && object.position.length === 2 && !isNaN(object.position[0]) && !isNaN(object.position[1])) {
+                             const infoContent = `<strong>Route:</strong> ${object.route_id || 'N/A'}<br>
+                                                 <strong>Milepoint:</strong> ${object.begin_poin || 'N/A'}<br>
+                                                 <strong>Demand Rank:</strong> ${object.DemandRank || 'N/A'}<br>
+                                                 <strong>Town:</strong> ${object.town || 'N/A'}<br>
+                                                 <strong>Sidewalks:</strong> ${object.hasOwnProperty('Sidewalks') ? (object.Sidewalks ? 'Yes' : 'No') : 'N/A'}<br>
+                                                 <strong>Access Control:</strong> ${object.AccessCont || 'N/A'}<hr>
+                                                 <strong>Coords (Lon, Lat):</strong> ${object.position[0].toFixed(6)}, ${object.position[1].toFixed(6)}`;
+                             const infoWindow = new google.maps.InfoWindow({
+                                 content: infoContent,
+                                 position: { lat: object.position[1], lng: object.position[0] }
+                             });
+                             infoWindow.open(map);
+                         } else {
+                             console.warn("Clicked object missing valid position:", object);
+                         }
+                     }
+                 }
+             });
+
+             // Update or create the overlay
+             if (deckOverlay) {
+                 deckOverlay.setProps({ layers: [scatterLayer] });
+             } else {
+                 deckOverlay = new deck.GoogleMapsOverlay({ layers: [scatterLayer] });
+                 deckOverlay.setMap(map);
+             }
+         }
+
+        // Filter data function - ** MODIFIED **
+        function filterData() {
+            const minRank = parseInt(document.getElementById('rankMin').value);
+            const maxRank = parseInt(document.getElementById('rankMax').value);
+
+            if (!pointsData || !Array.isArray(pointsData)) return []; // Ensure pointsData is an array
+
+            return pointsData.filter(point => {
+                // Basic validation: Ensure point structure and necessary properties exist
+                if (!point || typeof point !== 'object' ||
+                    !point.position || !Array.isArray(point.position) || point.position.length !== 2 ||
+                    typeof point.DemandRank === 'undefined' || typeof point.AccessCont === 'undefined') {
+                    // console.warn("Skipping point with invalid structure or missing properties:", point);
+                    return false; // Skip invalid points silently or log optionally
+                }
+
+                // Demand Rank Filter
+                const rank = point.DemandRank;
+                // Check if rank is a number and within the selected slider range
+                const rankMatch = typeof rank === 'number' && !isNaN(rank) && rank >= minRank && rank <= maxRank;
+
+                // Access Control Filter - ** NEW LOGIC **
+                let accessControlMatch = true; // Default to true (point is shown)
+                if (hideHighAccessRoads) {
+                    const accessCode = point.AccessCont;
+                    // Check if accessCode is a number before comparing
+                    if (typeof accessCode === 'number' && !isNaN(accessCode)) {
+                        // If hideHighAccessRoads is true, filter *out* points where AccessCont is 1, 2, 3, or 4
+                         accessControlMatch = !(accessCode >= 1 && accessCode <= 4);
+                    } else {
+                         // If AccessCont is missing or not a number, default to showing it (treat as non-highway)
+                         // console.warn("Point missing valid AccessCont property, treating as non-highway:", point);
+                         accessControlMatch = true; // Or set to false if you prefer to hide points with missing data when filtering
+                    }
+                }
+
+                // Combine all active filters - return true only if ALL conditions match
+                return rankMatch && accessControlMatch; // ** UPDATED RETURN **
+            });
+        }
+
+        // ** ADDED Function to set up the access control filter button **
+        function setupAccessControlFilter() {
+            const hideHighAccessBtn = document.getElementById('hideHighAccessBtn');
+            if (!hideHighAccessBtn) {
+                console.error("Filter button 'hideHighAccessBtn' not found.");
+                return; // Exit if the button doesn't exist
+            }
+
+            hideHighAccessBtn.addEventListener('click', function() {
+                // Toggle the filter state
+                hideHighAccessRoads = !hideHighAccessRoads;
+
+                // Update button appearance and text based on the new state
+                if (hideHighAccessRoads) {
+                    this.classList.add('active'); // Add 'active' class for styling
+                    this.textContent = 'Show Limited Access Highways';
+                } else {
+                    this.classList.remove('active'); // Remove 'active' class
+                    this.textContent = 'Hide Limited Access Highways';
+                }
+
+                // Update the map layer by re-filtering and re-rendering the Deck.gl layer
+                // Ensure data and map objects exist before trying to update
+                if (pointsData && pointsData.length > 0 && map && deckOverlay) {
+                    createDeckLayer();
+                } else {
+                    console.log("Map or data not ready, filter state changed but map not updated yet.");
+                }
+            });
+        }
+
+    </script>
+
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRG2xII3nH7HJkp08TKpssRgLkf0OjMBQ&libraries=visualization&callback=initialize">
+    </script>
+
+</body>
+</html>
